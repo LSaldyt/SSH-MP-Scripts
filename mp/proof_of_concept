@@ -1,0 +1,37 @@
+from multiprocessing import Pool
+import sys
+import time
+
+def bench(f, x):
+    begin = time.time()
+    for i in range(10000):
+        f(x)
+    end   = time.time()
+    return (end - begin)/10000
+
+def f(x):
+    return [x * 200 for i in range(1000)]
+
+def g(x):
+    return [x * 42 for i in range(1000)]
+
+def h(x):
+    f(x)
+    return g(x)
+
+if __name__ == "__main__":
+    pool = Pool(processes=4)
+    sys.stdout = open('file', 'w')
+    print('test')
+    sys.stdout = sys.__stdout__
+
+    res1 = pool.apply_async(bench, (f, 20))
+    res2 = pool.apply_async(bench, (g, 20))
+    tf = res1.get(timeout=1)
+    tg = res2.get(timeout=1)
+
+    print(tf)
+    print(tg)
+    print(tf + tg)
+
+    print(bench(h, 20))
