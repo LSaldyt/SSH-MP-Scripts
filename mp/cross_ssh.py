@@ -12,37 +12,28 @@ import os
 def get_cores(server):
     return subprocess.call(['ssh', server, 'NPROC="$(nproc)"; exit "$NPROC"'])
 
-def build_server_dict(servernames):
-    server_dict = {}
+def build_serverlist(servernames):
+    serverlist = []
     total_cores = 0
 
     for name in servernames:
          cores = get_cores(name)
          total_cores += cores
-         server_dict[name] = cores
+         serverlist.append((name, cores))
 
-    return server_dict, total_cores
+    return serverlist, total_cores
 
 def build_servernames(file):
     with open(file, 'r') as servers:
         return servers.read().splitlines()
-
-def _f(x, y=0):
-    return [x * 42 for i in range(1000)]
-
-futures = [Future(_f, [10], {'y' : 0})]
 
 def split_list(alist, wanted_parts=1):
     length = len(alist)
     return [ alist[i*length // wanted_parts: (i+1)*length // wanted_parts] 
 	     for i in range(wanted_parts) ]
 
-def send_tasks(server, server_cores, split_futures): 
+def send_tasks(server, futures_chunk): 
     print('Sending tasks to %s' % server)
-
-    futures_chunk = split_futures[:server_cores]
-    split_futures = split_futures[server_cores:]
-
     with open('%s_tasks.pkl' % server, 'wb') as taskfile:
         pickle.dump(futures_chunk, taskfile)
     # Copy tasks file to server
@@ -65,28 +56,48 @@ def get_task_result(server):
         print('Waiting for server')
     subprocess.call(['scp', '-r', '%s:%s_results.pkl' % (server, server), '.'])
     with open('%s_results.pkl' % server, 'rb') as resultfile:
-        return pickle.load(resultfile)
+        results = pickle.load(resultfile)
+    os.remove('%s_results.pkl' % server)
+    return results
 
 def cleanup(server):
-    cleanup_command = 'rm %s_results.pkl; rm %s_tasks.pkl;'
+    cleanup_command = 'rm %s_results.pkl; rm %s_tasks.pkl;' % (server, server)
     subprocess.call(['ssh', server, cleanup_command])
 
-if __name__ == "__main__":
-    servernames              = build_servernames(sys.argv[1])
-    server_dict, total_cores = build_server_dict(servernames)
+
+def _f(x, y=0):
+    return [x * 42 for i in range(1000)]
+
+futures = [Future(_f, [10], {'y' : 0}) for i in range(4)]
+
+def parallelize_futures(serverfile, futures):
+    servernames             = build_servernames(serverfile)
+    serverlist, total_cores = build_serverlist(servernames)
 
     split_futures            = split_list(futures, wanted_parts=total_cores)
-    
-    for server in server_dict:
-       send_tasks(server, server_dict[server], split_futures)
+
+    print('Beginning tasks..') 
+   
+    for server, cores in serverlist:
+       futures_chunk = split_futures[:cores]
+       split_futures = split_futures[cores:]
+       send_tasks(server, futures_chunk)
        send_task_runner(server)
        send_mp_module(server)
        call_task_runner(server)
        
-    for server in server_dict:
+    print('Retrieving task results..')
+ 
+    totalresults = []
+
+    for server, cores in serverlist:
         results = get_task_result(server)
         cleanup(server)
-        print(results)
-
-   
+        totalresults.append(results)
+    
+    return totalresults
+ 
+if __name__ == "__main__":
+    results = parallelize_futures(sys.argv[1], futures)
+    print(len(results))
 
